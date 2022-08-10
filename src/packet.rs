@@ -1,12 +1,12 @@
 use bytes::Buf;
 use futures::future::BoxFuture;
-use mc_buffer::encryption::{Compressor, Encrypt};
+use mc_buffer::encryption::{Compressor};
 use mc_chat::Chat;
 use mc_registry::mappings::Mappings;
 use mc_serializer::serde::ProtocolVersion;
 use std::io::Cursor;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
-use tokio::net::tcp::WriteHalf;
+
 
 pub type PacketWriterFuture<'a> = BoxFuture<'a, anyhow::Result<()>>;
 

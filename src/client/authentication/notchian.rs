@@ -1,19 +1,19 @@
 use crate::client::{AuthenticatedClient, Connection, ConnectionWriter};
 use crate::server::{ClientInformation, ServerClient};
 use crate::server_client_mingle::ClientAction;
-use crate::{simple_attach, ServerConfiguration};
+use crate::{simple_attach};
 use encryption_utils::MCPrivateKey;
 use encryption_utils::{private_key_to_der, sha1_message};
 use flume::Sender;
-use mc_buffer::buffer::{BorrowedPacketBuffer, BufferTransport, PacketBuffer};
-use mc_buffer::encryption::{Codec, Compressor, Decrypt, Encrypt};
+use mc_buffer::buffer::{BufferTransport, PacketBuffer};
+use mc_buffer::encryption::{Codec, Compressor, Encrypt};
 use mc_chat::Chat;
 use mc_registry::client_bound::login::{
-    Disconnect, EncryptionRequest, LoginSuccess, ServerId, SetCompression,
+    EncryptionRequest, LoginSuccess, ServerId, SetCompression,
 };
 use mc_registry::mappings::Mappings;
 use mc_registry::registry::{arc_lock, UnhandledContext};
-use mc_registry::registry::{LockedContext, StateRegistry, StateRegistryHandle};
+use mc_registry::registry::{LockedContext, StateRegistry};
 use mc_registry::server_bound::handshaking::Handshake;
 use mc_registry::server_bound::login::{EncryptionResponse, EncryptionResponseData, LoginStart};
 use mc_registry::shared_types::login::{IdentifiedKey, LoginUsername};
@@ -27,16 +27,16 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::tcp::WriteHalf;
 use tokio::net::TcpStream;
-use typemap::{Key, ShareMap, TypeMap};
+use typemap::{Key, ShareMap};
 
 use crate::client::authentication::MOJANG_KEY;
 use crate::packet::PacketWriter;
 use num_bigint::BigInt;
 use rand::RngCore;
 use reqwest::StatusCode;
-use serde::Serialize;
-use serde_json::json;
-use uuid::Uuid;
+
+
+
 
 pub struct NotchianLoginClientContext<'a> {
     self_reference: &'a NotchianAuthenticationScheme,

@@ -12,10 +12,10 @@ use mc_registry::server_bound::status::{Ping, Request};
 use mc_registry_derive::packet_handler;
 use mc_serializer::serde::ProtocolVersion;
 use std::io::Cursor;
-use std::net::TcpStream;
+
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
-use tokio::net::tcp::{OwnedWriteHalf, WriteHalf};
+use tokio::net::tcp::{WriteHalf};
 
 async fn send_packet<Packet: Mappings<PacketType = Packet>>(
     protocol_version: ProtocolVersion,
