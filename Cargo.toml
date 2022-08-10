@@ -3,8 +3,33 @@ name = "entropy"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 flume = "0.10.14"
-mc_serializer = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "master", version = "0.1.0" }
+mc_serializer = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
+mc_registry = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
+mc_registry_derive = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
+encryption_utils = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
+mc_chat = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
+mc_commands = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
+mc_buffer = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
+uuid = "1.1.2"
+tokio = { version = "1.20.1", features = ["full"] }
+log = { version = "0.4.17", features = ["serde"] }
+fern = { version = "0.6.1", features = ["chrono"] }
+serde = "1.0.143"
+serde_derive = "1.0.143"
+serde_json = "1.0.83"
+anyhow = "1.0.60"
+chrono = "0.4.20"
+bytes = "1.2.1"
+image = "0.24.3"
+base64 = "0.13.0"
+futures = "0.3.21"
+typemap = "0.3.3"
+sha-1 = "0.9"
+md-5 = "0.9"
+num-bigint = "0.4"
+reqwest = { version = "0.11.11", features = ["json"] }
+sha2 = "0.10.2"
+sha3 = "0.10.1"
+rand = "0.8.5"
