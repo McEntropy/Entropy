@@ -2,3 +2,5 @@
 Cargo.lock
 /.idea
 *.iml
+/config.json
+/server-icon.png
