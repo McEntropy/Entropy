@@ -6,10 +6,10 @@ use crate::server_client_mingle::ClientAction;
 
 use encryption_utils::MCPrivateKey;
 use flume::Sender;
-use mc_buffer::buffer::{BufferTransport};
 use mc_registry::server_bound::handshaking::Handshake;
 use std::net::SocketAddr;
 
+use mc_buffer::engine::BufferRegistryEngine;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 
@@ -34,20 +34,18 @@ impl Default for AuthHandler {
 impl AuthHandler {
     pub async fn login(
         &self,
-        stream: TcpStream,
+        engine: BufferRegistryEngine,
         socket_addr: SocketAddr,
-        buffer_transport: BufferTransport,
         handshake: Handshake,
         server_in_channel: Sender<ClientAction>,
         server_key: Arc<MCPrivateKey>,
-    ) -> anyhow::Result<AuthenticatedClient> {
+    ) -> anyhow::Result<(BufferRegistryEngine, Option<AuthenticatedClient>)> {
         match self {
             AuthHandler::Notchian(scheme) => {
                 scheme
                     .login_internal(
-                        stream,
+                        engine,
                         socket_addr,
-                        buffer_transport,
                         handshake,
                         server_in_channel,
                         server_key,

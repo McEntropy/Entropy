@@ -1,88 +1,92 @@
-use crate::client::client_status_handler::accept_status_client;
-use crate::packet::PacketWriter;
+use crate::client::client_status_handler::handle_status_client;
+use crate::client::draft_join::join_client;
 use crate::server_client_mingle::ClientAction;
 use crate::ServerConfiguration;
 use encryption_utils::MCPrivateKey;
 use flume::Sender;
-use mc_buffer::buffer::{BorrowedPacketBuffer, PacketBuffer};
-use mc_registry::mappings::Mappings;
-use mc_registry::registry::{arc_lock, LockedContext, StateRegistry};
+use mc_buffer::assign_key;
+use mc_buffer::buffer::PacketWriter;
+use mc_buffer::engine::{BufferRegistryEngine, BufferRegistryEngineContext, Context};
+use mc_chat::Chat;
+use mc_registry::client_bound::play::Disconnect;
+use mc_registry::create_registry;
+use mc_registry::registry::LockedContext;
 use mc_registry::server_bound::handshaking::{Handshake, NextState};
 use mc_registry_derive::packet_handler;
 use mc_serializer::serde::ProtocolVersion;
 use std::sync::Arc;
 use tokio::net::TcpStream;
 
-#[derive(Default)]
-struct HandshakeContext {
-    handshake: Option<Handshake>,
-}
+assign_key!(HandshakeKey, Handshake);
 
 #[packet_handler]
-pub async fn accept_handshake(packet: Handshake, context: LockedContext<HandshakeContext>) {
-    let mut context_write = context.write().await;
-    context_write.handshake = Some(packet);
+pub async fn accept_handshake<'registry>(
+    packet: Handshake,
+    context: LockedContext<BufferRegistryEngineContext<'registry>>,
+) {
+    Context::insert_data::<HandshakeKey>(context, packet).await;
 }
 
 async fn accept_new_client(
-    mut raw_stream: TcpStream,
+    raw_stream: TcpStream,
     address: std::net::SocketAddr,
     server_key: Arc<MCPrivateKey>,
     server_configuration: Arc<ServerConfiguration>,
     server_in_channel: Sender<ClientAction>,
 ) -> anyhow::Result<()> {
-    let (read, write) = raw_stream.split();
-    let mut packet_buffer = BorrowedPacketBuffer::new(read);
-    let context = arc_lock(HandshakeContext::default());
-    let mut registry = StateRegistry::fail_on_invalid(ProtocolVersion::Handshake);
-    crate::simple_attach!(Handshake, registry, accept_handshake);
-    let registry = arc_lock(registry);
+    let mut engine = BufferRegistryEngine::create(raw_stream);
 
-    let next = packet_buffer.loop_read().await?;
-    StateRegistry::emit(registry, Arc::clone(&context), std::io::Cursor::new(next)).await?;
+    let handshake = ProtocolVersion::Handshake;
+    create_registry! { reg, handshake {
+        Handshake, accept_handshake
+    }};
 
-    let context_read = context.read().await;
-    let handshake = context_read
-        .handshake
-        .as_ref()
-        .cloned()
-        .expect("Handshake should be populated post read.");
+    engine
+        .read_packets_until(reg, |unhandled, share| {
+            if let Some(unhandled) = unhandled {
+                log::error!(
+                    "Unhandled packet: {} with length {}",
+                    unhandled.packet_id,
+                    unhandled.bytes.len()
+                );
+                return true;
+            }
+            share.contains::<HandshakeKey>()
+        })
+        .await?;
+
+    let handshake = match engine.clone_data::<HandshakeKey>().await {
+        None => {
+            log::error!(target: address.to_string().as_str(),"No handshake found but one was expected.");
+            return Ok(());
+        }
+        Some(handshake) => handshake,
+    };
+
+    let protocol_version = ProtocolVersion::from(handshake.protocol_version);
+    engine.update_protocol(protocol_version);
+    engine.clear_data().await;
 
     match handshake.next_state {
         NextState::Status => {
-            accept_status_client(
-                handshake,
-                packet_buffer,
-                write,
-                server_configuration,
-                server_in_channel,
-            )
-            .await
+            handle_status_client(engine, server_configuration, server_in_channel).await
         }
         NextState::Login => {
-            let transport = packet_buffer.transport();
-            let mut authenticated_client = match server_configuration
+            let (mut engine, authenticated_client) = server_configuration
                 .auth
                 .login(
-                    raw_stream,
+                    engine,
                     address,
-                    transport,
                     handshake,
-                    server_in_channel,
+                    server_in_channel.clone(),
                     server_key,
                 )
-                .await
-            {
-                Ok(authenticated_client) => authenticated_client,
-                Err(error) => anyhow::bail!(error), // todo make this nice
-            };
-
-            let id = &authenticated_client.profile.id;
-            authenticated_client
-                .emit_server_message(ClientAction::RemoveClient(*id))
                 .await?;
 
-            authenticated_client.disconnect_play("KekW".into()).await?;
+            if let Some(authenticated_client) = authenticated_client {
+                join_client(engine, authenticated_client).await?;
+            }
+
             Ok(())
         }
     }
@@ -114,9 +118,9 @@ pub async fn poll_clients_continuously(
             .await
             {
                 log::error!(target: format!("{}", addr).as_str(), "Error in connection stream: {:?}", err);
+            } else {
+                log::debug!(target: format!("{}", addr).as_str(), "Successfully closed client connection.");
             }
-
-            log::info!(target: format!("{}", addr).as_str(), "EOF");
         });
     }
 }

@@ -1,76 +1,39 @@
 use crate::server_client_mingle::{ClientAction, StatusAck};
-use crate::{ServerConfiguration, ServerList};
-use bytes::Buf;
+use crate::{ArcServerConfigurationKey, ProtocolVersionKey, ServerConfiguration, ServerList};
 use flume::Sender;
-use mc_buffer::buffer::{BorrowedPacketBuffer, PacketBuffer};
-use mc_buffer::encryption::Compressor;
+use mc_buffer::buffer::PacketWriter;
 use mc_registry::client_bound::status::{Pong, Response, StatusResponse, StatusResponsePlayers};
-use mc_registry::mappings::Mappings;
-use mc_registry::registry::{arc_lock, LockedContext, StateRegistry};
-use mc_registry::server_bound::handshaking::Handshake;
+use mc_registry::registry::LockedContext;
 use mc_registry::server_bound::status::{Ping, Request};
 use mc_registry_derive::packet_handler;
-use mc_serializer::serde::ProtocolVersion;
-use std::io::Cursor;
 
+use crate::server::ClientActionSenderKey;
+use mc_buffer::assign_key;
+use mc_buffer::engine::{BufferRegistryEngine, BufferRegistryEngineContext, Context};
+use mc_registry::create_registry;
 use std::sync::Arc;
-use tokio::io::AsyncWriteExt;
-use tokio::net::tcp::{WriteHalf};
 
-async fn send_packet<Packet: Mappings<PacketType = Packet>>(
-    protocol_version: ProtocolVersion,
-    write_half: &mut WriteHalf<'_>,
-    packet: Packet,
-) -> anyhow::Result<()> {
-    let buffer = Packet::create_packet_buffer(protocol_version, packet)?;
-    let buffer = Compressor::uncompressed(buffer)?;
-    let mut buffer = Cursor::new(buffer);
-
-    while buffer.has_remaining() {
-        write_half.write_buf(&mut buffer).await?;
-    }
-    Ok(())
-}
-
-struct StatusClientContext<'a> {
-    write_half: WriteHalf<'a>,
-    protocol_version: ProtocolVersion,
-    server_configuration: Arc<ServerConfiguration>,
-    server_in_channel: Sender<ClientAction>,
-    complete: bool,
-}
-
-impl<'a> StatusClientContext<'a> {
-    async fn send_packet<Packet: Mappings<PacketType = Packet>>(
-        &mut self,
-        packet: Packet,
-    ) -> anyhow::Result<()> {
-        send_packet(self.protocol_version, &mut self.write_half, packet).await
-    }
-}
+assign_key!(CompletionKey, bool);
 
 #[allow(clippy::needless_lifetimes)]
 #[packet_handler(Request)]
-pub fn handle_status_request<'registry>(context: LockedContext<StatusClientContext<'registry>>) {
-    let context_read = context.read().await;
-
-    let previews_chat = context_read
-        .server_configuration
-        .preview_chat
-        .as_ref()
-        .cloned();
-    let version = if context_read.protocol_version == ProtocolVersion::Unknown {
-        context_read.protocol_version
-    } else {
-        ProtocolVersion::default()
-    }
-    .into();
+pub fn handle_engine_status_request<'registry>(
+    mut context: LockedContext<BufferRegistryEngineContext<'registry>>,
+) {
+    let server_configuration = Context::clone_data::<ArcServerConfigurationKey>(context.clone())
+        .await
+        .expect("Server configuration should exist in internal context data.");
+    let protocol_version = Context::clone_data::<ProtocolVersionKey>(context.clone())
+        .await
+        .expect("Protocol version should exist in internal context data.");
+    let client_action_channel = Context::clone_data::<ClientActionSenderKey>(context.clone())
+        .await
+        .expect("Protocol version should exist in internal context data.");
 
     let status_info: StatusAck = {
-        let server_in_channel = context_read.server_in_channel.clone();
         let (player_count_sender, player_count_receiver) = flume::unbounded();
         let task = tokio::task::spawn(async move {
-            server_in_channel
+            client_action_channel
                 .send_async(ClientAction::AckPlayerCount(player_count_sender))
                 .await
         });
@@ -79,12 +42,14 @@ pub fn handle_status_request<'registry>(context: LockedContext<StatusClientConte
         result
     };
 
-    let response = match &context_read.server_configuration.server_list {
+    let previews_chat = server_configuration.preview_chat.as_ref().cloned();
+
+    let response = match &server_configuration.server_list {
         ServerList::TrueAnswer { motd, max_players } => {
             let player_count = status_info.online_players() as i32;
 
             StatusResponse {
-                version,
+                version: protocol_version.into(),
                 players: StatusResponsePlayers {
                     max: *max_players,
                     online: player_count,
@@ -99,7 +64,7 @@ pub fn handle_status_request<'registry>(context: LockedContext<StatusClientConte
             let player_count = status_info.online_players() as i32;
 
             StatusResponse {
-                version,
+                version: protocol_version.into(),
                 players: StatusResponsePlayers {
                     max: player_count + 1,
                     online: player_count,
@@ -115,7 +80,7 @@ pub fn handle_status_request<'registry>(context: LockedContext<StatusClientConte
             online_players,
             max_players,
         } => StatusResponse {
-            version,
+            version: protocol_version.into(),
             players: StatusResponsePlayers {
                 max: *max_players,
                 online: *online_players,
@@ -127,58 +92,54 @@ pub fn handle_status_request<'registry>(context: LockedContext<StatusClientConte
         },
         ServerList::Custom => todo!(),
     };
-    drop(context_read);
-    let mut context_write = context.write().await;
-    context_write.send_packet(Response(response)).await?;
+    context.send_packet(Response(response)).await?;
 }
 
 #[allow(clippy::needless_lifetimes)]
 #[packet_handler]
-pub fn handle_ping<'registry>(
-    context: LockedContext<StatusClientContext<'registry>>,
+pub fn handle_engine_ping<'registry>(
+    mut context: LockedContext<BufferRegistryEngineContext<'registry>>,
     packet: Ping,
 ) {
-    let mut context_write = context.write().await;
-    context_write.send_packet(Pong::from(packet)).await?;
-    context_write.complete = true;
+    context.send_packet(Pong::from(packet)).await?;
+    Context::insert_data::<CompletionKey>(context, true).await;
 }
 
-pub async fn accept_status_client(
-    handshake: Handshake,
-    mut packet_buffer: BorrowedPacketBuffer<'_>,
-    write_half: WriteHalf<'_>,
+pub async fn handle_status_client(
+    mut engine: BufferRegistryEngine,
     server_configuration: Arc<ServerConfiguration>,
-    server_in_channel: Sender<ClientAction>,
+    client_action_sender: Sender<ClientAction>,
 ) -> anyhow::Result<()> {
-    let client_context = arc_lock(StatusClientContext {
-        protocol_version: ProtocolVersion::from(handshake.protocol_version),
-        write_half,
-        server_configuration,
-        server_in_channel,
-        complete: false,
-    });
+    engine
+        .insert_data::<ArcServerConfigurationKey>(Arc::clone(&server_configuration))
+        .await;
+    engine
+        .insert_data::<ClientActionSenderKey>(client_action_sender.clone())
+        .await;
+    engine
+        .insert_data::<ProtocolVersionKey>(engine.protocol_version())
+        .await;
+    engine.insert_data::<CompletionKey>(false).await;
+    let protocol_version = engine.protocol_version();
 
-    let mut registry =
-        StateRegistry::fail_on_invalid(ProtocolVersion::from(handshake.protocol_version));
-    crate::simple_attach!(Request, registry, handle_status_request);
-    crate::simple_attach!(Ping, registry, handle_ping);
+    create_registry! { reg, protocol_version {
+        Ping, handle_engine_ping
+        Request, handle_engine_status_request
+    }};
 
-    let registry = arc_lock(registry);
-
-    while {
-        let read = client_context.read().await;
-        let pass = !read.complete;
-        drop(read);
-        pass
-    } {
-        let next_packet = packet_buffer.loop_read().await?;
-        StateRegistry::emit(
-            Arc::clone(&registry),
-            Arc::clone(&client_context),
-            Cursor::new(next_packet),
-        )
+    engine
+        .read_packets_until(reg, |unhandled, share| {
+            if let Some(unhandled) = unhandled {
+                log::error!(
+                    "Unhandled status packet: {} with length {}",
+                    unhandled.packet_id,
+                    unhandled.bytes.len()
+                );
+                return true;
+            }
+            share.get::<CompletionKey>().cloned().unwrap_or(false)
+        })
         .await?;
-    }
 
     Ok(())
 }

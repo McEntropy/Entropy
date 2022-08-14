@@ -12,6 +12,7 @@ encryption_utils = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch 
 mc_chat = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
 mc_commands = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
 mc_buffer = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
+mc_level = { git = "https://github.com/MCEntropy/MCProtocol.rs", branch = "develop", version = "0.1.0" }
 uuid = "1.1.2"
 tokio = { version = "1.20.1", features = ["full"] }
 log = { version = "0.4.17", features = ["serde"] }

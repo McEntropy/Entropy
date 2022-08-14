@@ -1,11 +1,12 @@
 use crate::server_client_mingle::{ClientAction, ServerAction, StatusAck};
 use crate::ServerConfiguration;
 use flume::{Receiver, Sender};
+use mc_buffer::assign_key;
 use mc_registry::shared_types::login::IdentifiedKey;
 use mc_registry::shared_types::{GameProfile, MCIdentifiedKey};
 use mc_serializer::serde::ProtocolVersion;
 use std::collections::HashMap;
-use std::io::{Cursor};
+use std::io::Cursor;
 use std::path::Path;
 use std::process::exit;
 use std::sync::Arc;
@@ -42,6 +43,8 @@ pub struct Server {
     read_channel: Receiver<ClientAction>,
     favicon: Option<String>,
 }
+
+assign_key!(ClientActionSenderKey, Sender<ClientAction>);
 
 impl Server {
     pub fn create_server(

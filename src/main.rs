@@ -1,17 +1,21 @@
+#![allow(clippy::needless_lifetimes)]
 extern crate core;
 
 use crate::client::authentication::AuthHandler;
 use crate::server::Server;
 use crate::ServerList::TrueAnswer;
 use log::LevelFilter;
+use mc_buffer::assign_key;
 use mc_chat::Chat;
+use mc_serializer::serde::ProtocolVersion;
 use serde::de::Error;
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 mod client;
-pub mod packet;
+pub(crate) mod entity;
+pub(crate) mod packet;
 mod server;
 mod server_client_mingle;
 
@@ -97,6 +101,9 @@ impl ToString for BindString {
     }
 }
 
+assign_key!(ServerConfigurationKey, ServerConfiguration);
+assign_key!(ArcServerConfigurationKey, Arc<ServerConfiguration>);
+
 #[derive(serde_derive::Serialize, serde_derive::Deserialize, Debug, Default)]
 pub struct ServerConfiguration {
     #[serde(default)]
@@ -170,7 +177,11 @@ pub async fn main() -> anyhow::Result<()> {
     dispatch.apply()?;
 
     log::info!("Log dispatcher and server configuration successfully loaded.");
-    log::info!("Detected server configuration: {:?}", server_configuration);
+    if server_configuration.logger.level >= LevelFilter::Debug {
+        log::info!("Detected server configuration: {:?}", server_configuration);
+    } else {
+        log::info!("Detected server configuration: {:?}", server_configuration);
+    }
 
     let server_private_key = Arc::new(encryption_utils::new_key()?);
     let server_configuration = Arc::new(server_configuration);
@@ -194,3 +205,5 @@ macro_rules! simple_attach {
         <$packet>::attach_to_register(&mut $registry, $handler);
     };
 }
+
+assign_key!(ProtocolVersionKey, ProtocolVersion);
